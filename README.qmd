@@ -1,0 +1,32 @@
+---
+title: "H1B Dashboards: Charts"
+format: 
+  html:
+    toc: true
+    theme: cosmo
+author: "Laura Thomas - Senior Programmer"
+date: "8/26/2024"
+published-title: "Date Created"
+---
+
+# Summary
+
+This is the README for the performance *charts* for the H-1B One Workforce and Rural Healthcare Grants Shiny dashboards.
+
+OW Dashboard: <https://spra.shinyapps.io/OW-Charts/>
+
+RH Dashboard: <https://spra.shinyapps.io/RH-Charts/>
+
+# Quarterly Update Process
+
+1.  Project manager (Nicole Holmes) emails latest quarter of data as attached Excel files.
+2.  Download Excels to `data-raw` folder in `H1B-Dashboard-Charts` project in `PROJECT-CLONES` folder.
+
+::: callout-note
+Make sure to rename Excel files to align w/ naming convention of other files.
+:::
+
+3.  Run `ow_data_processing.R` in `scripts-data` folder.
+4.  Run `rh_data_processing.R` in `scripts-data` folder.
+5.  Re-deploy `OW-Charts` to shinyapps server.
+6.  Re-deploy `RH-Charts` to shinyapps server.

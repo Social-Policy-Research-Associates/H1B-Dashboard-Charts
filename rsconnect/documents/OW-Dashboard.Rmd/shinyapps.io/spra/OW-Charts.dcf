@@ -1,0 +1,13 @@
+name: OW-Charts
+title: OW-Charts
+username:
+account: spra
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 9259788
+bundleId: 9027359
+url: https://spra.shinyapps.io/OW-Charts/
+when: 1724690168.33966
+lastSyncTime: 1724690168.33966
+asMultiple: FALSE
+asStatic: FALSE

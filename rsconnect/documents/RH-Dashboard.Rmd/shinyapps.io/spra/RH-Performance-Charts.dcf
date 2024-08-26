@@ -1,0 +1,13 @@
+name: RH-Performance-Charts
+title: RH-Performance-Charts
+username:
+account: spra
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 9252296
+bundleId: 7312216
+url: https://spra.shinyapps.io/RH-Performance-Charts/
+when: 1686071814.16685
+lastSyncTime: 1686071814.16686
+asMultiple: FALSE
+asStatic: FALSE

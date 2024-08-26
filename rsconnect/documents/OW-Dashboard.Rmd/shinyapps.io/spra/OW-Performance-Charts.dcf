@@ -1,0 +1,14 @@
+name: OW-Performance-Charts
+title: OW-Performance-Charts
+username:
+account: spra
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 9252367
+bundleId: 7312249
+url: https://spra.shinyapps.io/OW-Performance-Charts/
+when: 1686072395.35964
+lastSyncTime: 1686072395.35965
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: ow_pdf_by_grantee.pdf

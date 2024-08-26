@@ -1,0 +1,214 @@
+---
+title: "`r params$thetitle`"
+output: 
+  pdf_document:
+    keep_tex: true
+header-includes:  
+- \usepackage{amsmath,amssymb}
+- \usepackage{lmodern}
+- \usepackage{iftex}
+- \usepackage[T1]{fontenc}
+- \usepackage[utf8]{inputenc}
+- \usepackage{textcomp}
+- \usepackage[]{microtype}
+- \usepackage{parskip}
+- \usepackage[margin=1in]{geometry}
+- \usepackage{graphicx}
+- \usepackage{array}
+- \usepackage{caption,tabularx,booktabs}
+# - \usepackage{threeparttablex}
+- \usepackage[default]{opensans}
+- \usepackage{titling}
+- \usepackage{microtype}
+- \usepackage{letterspace}
+- \setlength{\droptitle}{-4em}
+params:
+  grantee: NA
+  startdate: NA
+  enddate: NA
+  targets: NA
+  thetitle: NA
+classoption: landscape, table
+---
+
+
+\definecolor{lightgreen}{RGB}{144,238,144}
+\definecolor{yellow}{RGB}{255,255,0}
+\definecolor{lightpink}{RGB}{255,192,203}
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+params$grantee
+params$startdate
+params$enddate
+params$targets
+params$thetitle
+
+options(tinytex.verbose = TRUE)
+
+# https://community.rstudio.com/t/colors-by-names-using-xcolor-latex-error-option-clash-for-package-xcolor/81514/7
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(scales)
+library(janitor)
+library(here)
+library(ggiraph)
+library(plotly)
+library(shiny)
+library(shinydashboard)
+library(kableExtra)
+
+source(here("scripts-dashboards", "01_load_data_rh.R"))
+source(here("scripts-dashboards", "02_functions.R"))
+source(here("scripts-dashboards", "03_for_all_grantee_charts.R"))
+
+
+```
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, error=TRUE}
+
+  plotnumpdf <- as.numeric(params$grantee)
+  currentpdftable <- table_by_grantee_no_kbl[[plotnumpdf]]
+  headername <- params$thetitle
+  endquarter <- params$enddate %>% as.Date("%Y-%m-%d") %>% format("%m.%d.%Y") %>%  stringr::str_extract("^[0-9]{2}.[0-9]{2}")
+  targets <- params$targets
+  beg_qtr <- params$startdate %>% as.Date("%Y-%m-%d") %>% format("%m.%d.%Y") %>% sym()
+  end_qtr <- params$enddate %>% as.Date("%Y-%m-%d") %>% format("%m.%d.%Y") %>% sym()
+
+  
+  
+  targets_selected <- tibble(targets_for_table_by_grantee) %>%
+    slice(targets[1]:targets[2]) %>% 
+    pull()
+  
+  quarters_selected <- currentpdftable %>% 
+    select(any_of(beg_qtr):any_of(end_qtr)) %>% 
+    colnames()
+  
+  qtr_count <- length(quarters_selected)
+  
+  targets_count <- length(targets_selected)
+  
+  currentpdftable <- currentpdftable %>%
+    select(
+      `Performance Metric`,
+      beg_qtr:end_qtr, 
+      all_of(targets_selected),
+      `Total Target`) %>%
+    rowwise() %>% 
+    mutate(
+      `Cumulative Target` = sum(c_across(targets_selected)),
+      `% of Cumulative Target` = scales::percent(!!end_qtr/`Cumulative Target`),
+      .before = `Total Target`
+      ) %>% 
+    mutate(
+      `% of Total Target` = scales::percent(!!end_qtr/`Total Target`), .after = `Total Target`
+    )
+  
+  totalcols <- qtr_count + targets_count + 3
+  
+  current_threshold <- threshold_guide %>%
+    filter(quarter == endquarter) #current_qtr
+    
+  t_green <- seq(current_threshold$green_b, current_threshold$green_t, by = .01) %>% percent(accuracy = 1)
+  t_yellow <- seq(current_threshold$yellow_b, current_threshold$yellow_t, by = .01) %>% percent(accuracy = 1)
+  t_red <- seq(0, current_threshold$red_t, by = .01) %>% percent(accuracy = 1)
+  
+    kbl(currentpdftable) %>% 
+      kable_paper() %>% 
+      kable_styling(
+            font_size = 8, 
+            latex_options = c("hold_position")) %>% 
+            column_spec(1, width = "1in", latex_valign = "m") %>% 
+            column_spec(totalcols-targets_count-1, width = "0.5in", latex_valign = "m") %>%
+            column_spec(totalcols-targets_count, width = "0.5in", latex_valign = "m") %>%
+            column_spec(totalcols-1, width = "0.5in", latex_valign = "m") %>%
+            column_spec(totalcols+2, width = "0.5in", latex_valign = "m") %>%
+            column_spec(totalcols, 
+                        width = "0.5in", 
+                        latex_valign = "m",
+                        background = case_when(
+          currentpdftable$`% of Cumulative Target` %in% t_green ~ "lightgreen",
+          currentpdftable$`% of Cumulative Target` %in% t_yellow ~ "yellow",
+          currentpdftable$`% of Cumulative Target` %in% t_red ~ "lightpink",
+          TRUE ~ "white")) %>% 
+            column_spec(totalcols+1, width = "0.5in", latex_valign = "m")
+
+
+
+
+```
+
+
+*% of Current Year Target calculated as most recently available quarterly data divided by sum of cumulative milestones-to-date. e.g. Year 2 milestone is sum of Year 1 & Year 2 annual milestones.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+  plotnumpdf <- as.numeric(params$grantee)
+    charts_tps_ps[[plotnumpdf]] +
+      scale_x_date(limits = as.Date(c(params$startdate, params$enddate)),
+                   date_labels = "%m.%d.%Y",
+                  breaks = as.Date(quarters_selected, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+  plotnumpdf <- as.numeric(params$grantee)
+    charts_train_bt[[plotnumpdf]] +
+      scale_x_date(limits = as.Date(c(params$startdate, params$enddate)),
+                   date_labels = "%m.%d.%Y",
+                  breaks = as.Date(quarters_selected, "%m.%d.%Y"),
+                   expand = expansion(mult = 0.2))
+
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+  plotnumpdf <- as.numeric(params$grantee)
+    charts_train_ct[[plotnumpdf]] +
+      scale_x_date(limits = as.Date(c(params$startdate, params$enddate)),
+                   date_labels = "%m.%d.%Y",
+                  breaks = as.Date(quarters_selected, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))
+
+```
+ 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+  plotnumpdf <- as.numeric(params$grantee)
+    charts_train_cred_coc[[plotnumpdf]] +
+      scale_x_date(limits = as.Date(c(params$startdate, params$enddate)),
+                   date_labels = "%m.%d.%Y",
+                  breaks = as.Date(quarters_selected, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))
+
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+  plotnumpdf <- as.numeric(params$grantee)
+    charts_empl_ee[[plotnumpdf]] +
+      scale_x_date(limits = as.Date(c(params$startdate, params$enddate)),
+                   date_labels = "%m.%d.%Y",
+                  breaks = as.Date(quarters_selected, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))
+
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+  plotnumpdf <- as.numeric(params$grantee)
+    charts_total_iwa[[plotnumpdf]] +
+      scale_x_date(limits = as.Date(c(params$startdate, params$enddate)),
+                   date_labels = "%m.%d.%Y",
+                  breaks = as.Date(quarters_selected, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))
+
+```

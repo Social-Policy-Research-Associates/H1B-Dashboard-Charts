@@ -1,0 +1,1132 @@
+---
+title: "RH Performance Charts"
+output:
+  flexdashboard::flex_dashboard:
+    css: www/styles.css
+    vertical_layout: scroll
+    orientation: rows
+runtime: shiny
+resource_files:
+- "data-ready/Reporting Quarters.xlsx"
+- "data-ready/Targets.xlsx"
+- "data-ready/wips_variables.csv"
+- "data-ready/combined_QPR_rh_data.csv"
+- "scripts-dashboards/01_load_data_rh.R"
+- "scripts-dashboards/02_functions.R"
+- "scripts-dashboards/03_for_all_grantee_charts.R"
+- "rh_pdf_by_grantee.Rmd"
+- "www/styles.css"
+
+---
+
+```{r libraries, include=FALSE}
+
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(scales)
+library(janitor)
+library(here)
+library(ggiraph)
+library(plotly)
+library(shiny)
+library(shinydashboard)
+library(kableExtra)
+library(htmltools)
+library(rmarkdown)
+
+```
+
+```{r setup, include=FALSE}
+
+source(here("scripts-dashboards", "01_load_data_rh.R"))
+source(here("scripts-dashboards", "02_functions.R"))
+source(here("scripts-dashboards", "03_for_all_grantee_charts.R"))
+
+```
+
+```{r functions, include=FALSE}
+
+silly_legend <- reactive({
+  
+show_columns <<- df_grant_years %>%
+  filter(Year %in% input$years) %>%
+  mutate(Year = 1) %>%
+  group_by(Year) %>%
+  mutate(columns = paste0(`Reporting Quarters`, collapse = "|")) %>%
+  distinct() %>%
+  pull()
+
+
+targets_viewed <<- for_make_table_all %>%
+    select(matches(show_columns)) %>%
+    select(matches("Target$"))
+
+quarters <- for_make_table_all %>%
+    select(matches(show_columns)) %>%
+    select(matches("[0-9]{2}.[0-9]{2}.[0-9]{4}$"))
+
+just_qtrs <<- quarters %>% colnames()
+first_quarter <<- first(just_qtrs)
+last_quarter <<- last(just_qtrs)
+header_targets <<- ncol(targets_viewed)
+header_quarters <<- ncol(quarters)
+first_qtr <<- first(quarters)
+last_qtr <<- last(quarters)
+last_qtr_col <<- quarters %>% select(last_col(0L)) %>% colnames() %>% stringr::str_extract("^[0-9]{2}.[0-9]{2}")
+  last_qtr_column <<- quarters %>% select(last_col(0L)) %>% colnames() %>% sym()
+
+  current_threshold <<- threshold_guide %>%
+  filter(quarter == last_qtr_col) #current_qtr
+
+})
+  
+  t_green <- reactive({seq(current_threshold$green_b, current_threshold$green_t, by = .01) %>% percent(accuracy = 1)})
+  t_yellow <- reactive({seq(current_threshold$yellow_b, current_threshold$yellow_t, by = .01) %>% percent(accuracy = 1)})
+  t_red <- reactive({seq(0, current_threshold$red_t, by = .01) %>% percent(accuracy = 1)})
+  
+#   first_qtr <- first(just_qtrs)
+#   last_qtr <- last(just_qtrs)
+
+
+# # for all grantee charts
+# all_grantees <- list()
+# df_all <- df %>% replace(is.na(.), 0)
+# all_grantees <- lapply(ps_cols, make_chart_all, data = df_all)
+# names(all_grantees) <- ps_cols
+# 
+# table_by_grantee_no_kbl <- lapply(grantees, make_table, data = df, targets = df_targets)
+# names(table_by_grantee_no_kbl) <- grantees
+# targets_for_table_by_grantee <- str_subset(colnames(table_by_grantee_no_kbl[[1]]), "\nY")
+#   
+# 
+# master_table <- do.call(rbind.data.frame, table_by_grantee_no_kbl)
+# master_table_grantees <- rep(grantees, each=6) %>% cbind(master_table) %>% rename(`Grantee Name` = 1)
+# rownames(master_table_grantees) <- NULL
+# columns_in_master <- ncol(master_table)
+# 
+# # create charts for each grantee for each metric
+# for (i in seq_along(ps_cols)){
+#   col <- ps_cols[i]
+#   column <- enquo(col)
+#   label <- paste0("charts_", ps_cols[i])
+#   set_of_charts <- lapply(grantees, make_chart, data = df, metric = ps_cols[i])
+#   names(set_of_charts) <- grantees
+#   assign(label, set_of_charts)
+# }
+
+# reactivity for by grantee tab
+by_grantee_listener <- reactive({
+  
+    plotnum <<- as.numeric(input$grantee)
+  headername <<- choices_rev[[plotnum]]
+  currenttable <<- table_by_grantee_no_kbl[[plotnum]]
+  
+  
+  beg_qtr <<- input$startdate %>% as.Date("%Y-%m-%d") %>% format("%m.%d.%Y") %>% sym()
+  end_qtr <<- input$enddate %>% as.Date("%Y-%m-%d") %>% format("%m.%d.%Y") %>% sym()
+  
+  qtr_count <<- currenttable %>% 
+    select(beg_qtr:end_qtr) %>% 
+    ncol()
+  
+  quarters_selected <<- currenttable %>% 
+    select(any_of(beg_qtr):any_of(end_qtr)) %>% colnames()
+  
+  targets_selected <<- tibble(targets_for_table_by_grantee) %>%
+    slice(input$targets_by_grantee[1]:input$targets_by_grantee[2]) %>% 
+    pull()
+  
+  targets_count <<- length(targets_selected)
+  
+    
+  better_by_grantee_table <<- currenttable %>%
+    select(
+      `Performance Metric`,
+      beg_qtr:end_qtr, 
+      all_of(targets_selected),
+      `Total Target`) %>%
+    rowwise() %>% 
+    mutate(
+      `Cumulative Target` = sum(c_across(targets_selected)),
+      `% of Cumulative Target` = scales::percent(!!end_qtr/`Cumulative Target`),
+      .before = `Total Target`
+      ) %>% 
+    mutate(
+      `% of Total Target` = scales::percent(!!end_qtr/`Total Target`), .after = `Total Target`
+    )
+  
+  totalcols <<- qtr_count + targets_count + 3
+  
+  
+  end_qtr_threshold <- rlang::as_string(end_qtr) %>% stringr::str_extract("^[0-9]{2}.[0-9]{2}")
+  current_threshold_by_grantee <<- threshold_guide %>%
+    filter(quarter == end_qtr_threshold) #current_qtr
+
+})
+
+```
+
+
+All Grantees
+=====================================
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+checkboxGroupInput(
+  "years", 
+  "Reporting Years",
+  selected = c("1", "2", "3"),
+  inline = FALSE,
+  choiceNames = c("Y1", "Y2", "Y3", "Y4", "Extension"),
+  choiceValues = c("1", "2", "3", "4", "Extension")
+  )
+
+# VALUES FOR TABLES -------------------------------
+
+
+
+# THRESHOLDS LEGEND ------------------------
+
+
+
+renderUI({
+  
+  silly_legend()
+  
+  htmltools::tagList(
+  tags$div(class = "legend", 
+           tags$span(id = "legend-label", "Quarterly Thresholds Key"),
+           tags$table(id = "legendid",
+             tags$tr(
+               tags$th(colspan = 2, paste0(current_threshold$quarter, " Quarterly Threshold"))
+             ),
+             tags$tr(
+               tags$td(
+                 div(id = "lightgreen")
+               ),
+               tags$td(class = "legendtext",
+                       paste0(current_threshold$nice_green_b, " or above")
+               )
+             ),
+             tags$tr(
+               tags$td(
+                 div(id = "yellow")
+               ),
+               tags$td(class = "legendtext",
+                       paste0("Between ", current_threshold$nice_yellow_b, " to ", current_threshold$nice_yellow_t)
+               )
+             ),
+             tags$tr(
+               tags$td(
+                 div(id = "lightpink")
+               ),
+               tags$td(class = "legendtext",
+                       paste0(current_threshold$nice_red_t, " or below")
+               )
+             )
+           )
+  )
+)
+  
+})
+```
+
+
+Row {data-height=450}
+------------------------------------
+### Summary
+
+
+```{r}
+
+renderUI({
+
+  silly_legend()
+  
+  table_all_grantees <- for_make_table_all %>%
+  select(
+    `Performance Metric`,
+    matches(show_columns),
+    `% of Cumulative Target*` = `% of Current Year Target*`,
+    `Total Target`,
+    `% of Total Target`
+    ) %>%
+    rowwise() %>% 
+    mutate(
+      `Cumulative Target` = sum(c_across(colnames(targets_viewed))),
+      .before = `% of Cumulative Target*`
+    ) %>%
+    mutate(
+      `% of Cumulative Target*` = scales::percent(!!last_qtr_column/`Cumulative Target`) #https://rlang.r-lib.org/reference/topic-inject.html
+    ) %>%
+  kbl_table() %>%
+    scroll_box(width = "900px", height = "100%") |> 
+  add_header_above(c(" " = 1,
+                     "Reporting Quarters" = header_quarters,
+                     "Targets" = header_targets+2,
+                     "Progress to Targets" = 2))
+  
+current_year_color <- 1+header_quarters+header_targets+2
+  
+  HTML(
+    table_all_grantees %>%
+      column_spec(1, width_min = '3in') %>%
+      column_spec(
+        current_year_color,
+        width_min = '70px',
+        width_max = '75px',
+        background = case_when(
+          for_make_table_all$`% of Current Year Target*` %in% t_green() ~ "lightgreen",
+          for_make_table_all$`% of Current Year Target*` %in% t_yellow() ~ "yellow",
+          for_make_table_all$`% of Current Year Target*` %in% t_red() ~ "lightpink",
+          TRUE ~ "white"),
+        extra_css = "border-radius: 4px;")
+  )
+})
+```
+
+
+::: {.footnote}
+*% of Current Year Target calculated as most recently available quarterly data divided by sum of cumulative milestones-to-date. e.g. Year 2 milestone is sum of Year 1 & Year 2 annual milestones.
+:::
+
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+### Total Participants Served
+```{r}
+renderPlot({
+  
+  silly_legend()
+
+  all_grantees$tps_ps +
+          scale_x_date(limits = c(as.Date(first_quarter, "%m.%d.%Y"), as.Date(last_quarter, "%m.%d.%Y")),
+                   date_labels = "%m.%d.%Y",
+                   breaks = as.Date(just_qtrs, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))
+  
+  })
+```
+
+### Progress to Current Year Target
+```{r}
+
+participants_served <- reactive({
+  
+    silly_legend()
+
+    yellow_green_participants_served <- readr::parse_number(t_green()) %>% first()
+  red_yellow_participants_served <- readr::parse_number(t_yellow()) %>% first()
+  
+  master_table_grantees %>%
+    filter(`Performance Metric` == "Total Participants Served") %>%
+    rowwise() %>%
+    mutate(
+      `Cumulative Target` = sum(c_across(str_replace_all(colnames(targets_viewed), "<br>", "\n"))),
+      `% of Cumulative Target` = (!!last_qtr_column/`Cumulative Target`*100)
+    ) %>%
+    select(
+      `Grantee Name`,
+      `% of Cumulative Target`
+    ) %>%
+    arrange(desc(`% of Cumulative Target`)) %>%
+    mutate(`% of Cumulative Target*` = percent(`% of Cumulative Target`/100, accuracy = 1)) %>%
+    rowwise() %>% 
+  mutate(color_bars = case_when(
+    `% of Cumulative Target` > yellow_green_participants_served ~ "#70AD47",
+    `% of Cumulative Target` <= yellow_green_participants_served &
+      `% of Cumulative Target` > red_yellow_participants_served ~ "#FFFF00",
+    `% of Cumulative Target` <= red_yellow_participants_served ~ "#FF9B9B",
+    TRUE ~ "lightgray"
+  ))
+})
+
+renderPlot({
+
+  chart_by_current_target(participants_served(), "Total Participants Served")
+
+})
+
+```
+
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+### Began Training
+```{r}
+renderPlot({
+  
+  silly_legend()
+
+  all_grantees$train_bt +
+          scale_x_date(limits = c(as.Date(first_quarter, "%m.%d.%Y"), as.Date(last_quarter, "%m.%d.%Y")),
+                   date_labels = "%m.%d.%Y",
+                   breaks = as.Date(just_qtrs, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))
+    })
+```
+
+### Progress to Current Year Target
+```{r}
+
+
+began_training <- reactive({
+  
+    silly_legend()
+
+    yellow_green_began_training <- readr::parse_number(t_green()) %>% first()
+  red_yellow_began_training <- readr::parse_number(t_yellow()) %>% first()
+  
+  master_table_grantees %>%
+    filter(`Performance Metric` == "Participants Began Ed/Job Training") %>%
+    rowwise() %>%
+    mutate(
+      `Cumulative Target` = sum(c_across(str_replace_all(colnames(targets_viewed), "<br>", "\n"))),
+      `% of Cumulative Target` = (!!last_qtr_column/`Cumulative Target`*100)
+    ) %>%
+    select(
+      `Grantee Name`,
+      `% of Cumulative Target`
+    ) %>%
+    arrange(desc(`% of Cumulative Target`)) %>%
+    mutate(`% of Cumulative Target*` = percent(`% of Cumulative Target`/100, accuracy = 1)) %>%
+    rowwise() %>% 
+  mutate(color_bars = case_when(
+    `% of Cumulative Target` > yellow_green_began_training ~ "#70AD47",
+    `% of Cumulative Target` <= yellow_green_began_training &
+      `% of Cumulative Target` > red_yellow_began_training ~ "#FFFF00",
+    `% of Cumulative Target` <= red_yellow_began_training ~ "#FF9B9B",
+    TRUE ~ "lightgray"
+  ))
+})
+
+renderPlot({
+  
+   chart_by_current_target(began_training(), "Participants Began Ed/Job Training") +
+            scale_y_discrete(expand = expansion(mult = c(0, .3)))
+
+
+})
+
+```
+
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+### Completed Training
+```{r}
+renderPlot({
+  
+    silly_legend()
+      
+    all_grantees$train_ct +
+          scale_x_date(limits = c(as.Date(first_quarter, "%m.%d.%Y"), as.Date(last_quarter, "%m.%d.%Y")),
+                   date_labels = "%m.%d.%Y",
+                   breaks = as.Date(just_qtrs, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))})
+```
+
+### Progress to Current Year Target
+```{r}
+
+completed_training <- reactive({
+  
+    silly_legend()
+
+    yellow_green_completed_training <- readr::parse_number(t_green()) %>% first()
+  red_yellow_completed_training <- readr::parse_number(t_yellow()) %>% first()
+  
+  master_table_grantees %>%
+    filter(`Performance Metric` == "Participants Completed Training") %>%
+    rowwise() %>%
+    mutate(
+      `Cumulative Target` = sum(c_across(str_replace_all(colnames(targets_viewed), "<br>", "\n"))),
+      `% of Cumulative Target` = (!!last_qtr_column/`Cumulative Target`*100)
+    ) %>%
+    select(
+      `Grantee Name`,
+      `% of Cumulative Target`
+    ) %>%
+    arrange(desc(`% of Cumulative Target`)) %>%
+    mutate(`% of Cumulative Target*` = percent(`% of Cumulative Target`/100, accuracy = 1)) %>%
+    rowwise() %>% 
+  mutate(color_bars = case_when(
+    `% of Cumulative Target` > yellow_green_completed_training ~ "#70AD47",
+    `% of Cumulative Target` <= yellow_green_completed_training &
+      `% of Cumulative Target` > red_yellow_completed_training ~ "#FFFF00",
+    `% of Cumulative Target` <= red_yellow_completed_training ~ "#FF9B9B",
+    TRUE ~ "lightgray"
+  ))
+})
+
+renderPlot({
+  
+   chart_by_current_target(completed_training(), "Participants Completed Training") +
+    ylim(NA, max(completed_training()$`% of Cumulative Target`)*1.2)
+
+})
+
+
+```
+
+ 
+Row {.tabset .tabset-fade}
+-------------------------------------
+### Completed with Credential
+```{r}
+renderPlot({
+  
+  silly_legend()
+
+    all_grantees$train_cred_coc +
+          scale_x_date(limits = c(as.Date(first_quarter, "%m.%d.%Y"), as.Date(last_quarter, "%m.%d.%Y")),
+                   date_labels = "%m.%d.%Y",
+                   breaks = as.Date(just_qtrs, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))})
+```
+
+### Progress to Current Year Target
+```{r}
+
+completed_with_credential <- reactive({
+  
+    silly_legend()
+
+    yellow_green_completed_with_credential <- readr::parse_number(t_green()) %>% first()
+  red_yellow_completed_with_credential <- readr::parse_number(t_yellow()) %>% first()
+  
+  master_table_grantees %>%
+    filter(`Performance Metric` == "Total Participants Completed and Obtained Credential") %>%
+    rowwise() %>%
+    mutate(
+      `Cumulative Target` = sum(c_across(str_replace_all(colnames(targets_viewed), "<br>", "\n"))),
+      `% of Cumulative Target` = (!!last_qtr_column/`Cumulative Target`*100)
+    ) %>%
+    select(
+      `Grantee Name`,
+      `% of Cumulative Target`
+    ) %>%
+    arrange(desc(`% of Cumulative Target`)) %>%
+    mutate(`% of Cumulative Target*` = percent(`% of Cumulative Target`/100, accuracy = 1)) %>%
+    rowwise() %>% 
+  mutate(color_bars = case_when(
+    `% of Cumulative Target` > yellow_green_completed_with_credential ~ "#70AD47",
+    `% of Cumulative Target` <= yellow_green_completed_with_credential &
+      `% of Cumulative Target` > red_yellow_completed_with_credential ~ "#FFFF00",
+    `% of Cumulative Target` <= red_yellow_completed_with_credential ~ "#FF9B9B",
+    TRUE ~ "lightgray"
+  ))
+})
+
+renderPlot({
+  
+     chart_by_current_target(completed_with_credential(), "Total Participants Completed and Obtained Credential") +
+    ylim(NA, max(completed_with_credential()$`% of Cumulative Target`)*1.2)
+  
+})
+
+```
+
+
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+### Entered Employment
+```{r}
+renderPlot({
+  
+  silly_legend()
+  
+  all_grantees$empl_ee +
+    scale_x_date(limits = c(as.Date(first_quarter, "%m.%d.%Y"), as.Date(last_quarter, "%m.%d.%Y")),
+      date_labels = "%m.%d.%Y",
+      breaks = as.Date(just_qtrs, "%m.%d.%Y"),
+      expand = expansion(mult = 0.2)
+    )})
+```
+
+### Progress to Current Year Target
+```{r}
+
+entered_employment <- reactive({
+  
+    silly_legend()
+
+    yellow_green_entered_employment <- readr::parse_number(t_green()) %>% first()
+  red_yellow_entered_employment <- readr::parse_number(t_yellow()) %>% first()
+  
+  master_table_grantees %>%
+    filter(`Performance Metric` == "Entered Employment") %>%
+    rowwise() %>%
+    mutate(
+      `Cumulative Target` = sum(c_across(str_replace_all(colnames(targets_viewed), "<br>", "\n"))),
+      `% of Cumulative Target` = (!!last_qtr_column/`Cumulative Target`*100)
+    ) %>%
+    select(
+      `Grantee Name`,
+      `% of Cumulative Target`
+    ) %>%
+    arrange(desc(`% of Cumulative Target`)) %>%
+    mutate(`% of Cumulative Target*` = percent(`% of Cumulative Target`/100, accuracy = 1)) %>%
+    rowwise() %>% 
+  mutate(color_bars = case_when(
+    `% of Cumulative Target` > yellow_green_entered_employment ~ "#70AD47",
+    `% of Cumulative Target` <= yellow_green_entered_employment &
+      `% of Cumulative Target` > red_yellow_entered_employment ~ "#FFFF00",
+    `% of Cumulative Target` <= red_yellow_entered_employment ~ "#FF9B9B",
+    TRUE ~ "lightgray"
+  ))
+})
+
+renderPlot({
+
+  chart_by_current_target(entered_employment(), "Entered Employment")+
+    ylim(NA, max(entered_employment()$`% of Cumulative Target`)*1.2)
+  
+})
+
+```
+
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+### Incumbent Workers Advanced
+```{r}
+renderPlot({
+  
+    silly_legend()
+
+    all_grantees$total_iwa +
+          scale_x_date(limits = c(as.Date(first_quarter, "%m.%d.%Y"), as.Date(last_quarter, "%m.%d.%Y")),
+                   date_labels = "%m.%d.%Y",
+                   breaks = as.Date(just_qtrs, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))})
+```
+
+### Progress to Current Year Target
+```{r}
+
+incumbent_workers_adv <- reactive({
+  
+    silly_legend()
+
+    yellow_green_incumbent_workers_adv <- readr::parse_number(t_green()) %>% first()
+  red_yellow_incumbent_workers_adv <- readr::parse_number(t_yellow()) %>% first()
+  
+  master_table_grantees %>%
+    filter(`Performance Metric` == "Incumbent Workers Advanced") %>%
+    rowwise() %>%
+    mutate(
+      `Cumulative Target` = sum(c_across(str_replace_all(colnames(targets_viewed), "<br>", "\n"))),
+      `% of Cumulative Target` = (!!last_qtr_column/`Cumulative Target`*100)
+    ) %>%
+    select(
+      `Grantee Name`,
+      `% of Cumulative Target`
+    ) %>%
+    arrange(desc(`% of Cumulative Target`)) %>%
+    mutate(`% of Cumulative Target*` = percent(`% of Cumulative Target`/100, accuracy = 1)) %>%
+    rowwise() %>% 
+  mutate(color_bars = case_when(
+    `% of Cumulative Target` > yellow_green_incumbent_workers_adv ~ "#70AD47",
+    `% of Cumulative Target` <= yellow_green_incumbent_workers_adv &
+      `% of Cumulative Target` > red_yellow_incumbent_workers_adv ~ "#FFFF00",
+    `% of Cumulative Target` <= red_yellow_incumbent_workers_adv ~ "#FF9B9B",
+    TRUE ~ "lightgray"
+  ))
+})
+
+renderPlot({
+  
+    chart_by_current_target(incumbent_workers_adv(), "Incumbent Workers Advanced")+
+    ylim(NA, max(incumbent_workers_adv()$`% of Cumulative Target`)*1.2)
+
+})
+
+```
+
+
+
+
+By Grantee
+=====================================
+
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+selectInput("grantee", h3("Grantee"), choices = choices, selected = 1)
+
+tags$h3("Reporting Quarters")
+selectInput("startdate", "Start Date", choices = df_dates$qtr_end, selected = df_dates_first$qtr_end)
+selectInput("enddate", "End Date", choices = df_dates$qtr_end, selected = df_dates_last$qtr_end)
+
+tags$h3("Targets")
+sliderInput("targets_by_grantee", "Show Targets for Years:", min = 1, max = 4, value = c(1, 3))
+
+
+
+renderText(if (input$startdate == input$enddate) print("Please select different start and end dates.") else print(""))
+renderText(if (input$startdate > input$enddate) print("Please select end date that comes after start date.") else print(""))
+
+uiOutput("thebutton")
+
+
+output$thebutton <- renderUI({
+  downloadButton(outputId = "downBtn", label = "Download Grantee Report", style = "width:100%;")
+})
+
+# Add download handling
+output$downBtn <- downloadHandler(
+  filename = "rh_pdf_by_grantee.pdf",
+  content = function(file) {
+    withProgress(
+      message = 'Generating download', 
+      style = "notification", 
+      value = 0.3, {
+    
+    params <- list(
+      grantee = as.numeric(input$grantee),
+      startdate = as.Date(input$startdate, "%Y-%m-%d"),
+      enddate = as.Date(input$enddate, "%Y-%m-%d"),
+      targets = input$targets_by_grantee,
+      thetitle = choices_rev[[as.numeric(input$grantee)]]
+    )
+    incProgress(0.2)
+        
+    rendered_report <- rmarkdown::render(
+                      input = "rh_pdf_by_grantee.Rmd", 
+                      output_format = "pdf_document",
+                      output_file = "rh_pdf_by_grantee.pdf",
+                      params = params,
+                      envir = new.env(parent = globalenv())
+                      )
+    incProgress(0.4)
+    file.copy(rendered_report, file)})
+  }
+)
+
+
+
+
+
+renderUI({
+
+  by_grantee_listener()
+  
+  # THRESHOLDS LEGEND ------------------------
+  htmltools::tagList(
+    tags$div(class = "legend",
+             # fa_i(name = "fas fa-window-restore", id = "dimmer"),
+             tags$span(id = "legend-label", "Quarterly Thresholds Key"),
+             tags$table(id = "legendid",
+               tags$tr(
+                 # tags$th(),
+                 tags$th(colspan = 2, paste0(current_threshold_by_grantee$quarter, " Quarterly Threshold"))
+               ),
+               tags$tr(
+                 tags$td(
+                   div(id = "lightgreen")
+                 ),
+                 tags$td(class = "legendtext",
+                         paste0(current_threshold_by_grantee$nice_green_b, " or above")
+                 )
+               ),
+               tags$tr(
+                 tags$td(
+                   div(id = "yellow")
+                 ),
+                 tags$td(class = "legendtext",
+                         paste0("Between ", current_threshold_by_grantee$nice_yellow_b, " to ", current_threshold_by_grantee$nice_yellow_t)
+                 )
+               ),
+               tags$tr(
+                 tags$td(
+                   div(id = "lightpink")
+                 ),
+                 tags$td(class = "legendtext",
+                         paste0(current_threshold_by_grantee$nice_red_t, " or below")
+                 )
+               )
+             )
+    )
+  )
+
+})
+
+
+```
+ 
+Row {data-height=575}
+------------------------------------
+
+### Summary
+```{r}
+
+
+renderUI({
+  
+  by_grantee_listener()
+  
+    # VALUES FOR TABLES -------------------------------
+  t_green_by_grantee <- seq(current_threshold_by_grantee$green_b, current_threshold_by_grantee$green_t, by = .01) %>% percent(accuracy = 1)
+  t_yellow_by_grantee <- seq(current_threshold_by_grantee$yellow_b, current_threshold_by_grantee$yellow_t, by = .01) %>% percent(accuracy = 1)
+  t_red_by_grantee <- seq(0, current_threshold_by_grantee$red_t, by = .01) %>% percent(accuracy = 1)
+  
+HTML(
+    kbl(better_by_grantee_table) %>% 
+    kable_paper() %>% 
+    kable_styling(bootstrap_options = c("striped", "hover"), 
+                  position = "left", 
+                  full_width = FALSE) %>% 
+      column_spec(1, width_min = '140px', width_max = '200px') %>%
+      # column_spec(2:10, width_min = '70px', width_max = '75px') %>%
+      column_spec(
+        totalcols, 
+        width_min = '70px', 
+        width_max = '75px',
+        background = case_when(
+          better_by_grantee_table$`% of Cumulative Target` %in% t_green_by_grantee ~ "lightgreen",
+          better_by_grantee_table$`% of Cumulative Target` %in% t_yellow_by_grantee ~ "yellow",
+          better_by_grantee_table$`% of Cumulative Target` %in% t_red_by_grantee ~ "lightpink",
+          TRUE ~ "white"),
+        extra_css = "border-radius: 4px;") %>%
+      scroll_box(width = "900px", height = "100%") |> 
+      add_header_above(c(" " = 1, 
+                       "Reporting Quarters" = as.numeric(qtr_count), 
+                       "Targets" = as.numeric(targets_count),
+                       "Progress to Targets" = 4)) %>% 
+      add_header_above(c(setNames(as.numeric(totalcols + 2), headername))
+  ))
+})
+```
+::: {.footnote}
+*% of Current Year Target calculated as most recently available quarterly data divided by sum of cumulative milestones-to-date. e.g. Year 2 milestone is sum of Year 1 & Year 2 annual milestones.
+:::
+ 
+ 
+Row
+-------------------------------------
+
+### Total Participants Served
+```{r message=FALSE, warning=FALSE}
+renderPlot({
+  plotnum <- as.numeric(input$grantee)
+    charts_tps_ps[[plotnum]] +
+      scale_x_date(limits = c(as.Date(input$startdate, "%Y-%m-%d"), as.Date(input$enddate, "%Y-%m-%d")),
+                   date_labels = "%m.%d.%Y",
+                   breaks = as.Date(quarters_selected, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))
+})
+```
+
+Row
+-------------------------------------
+
+### Began Training
+```{r}
+renderPlot({
+  plotnum <- as.numeric(input$grantee)
+    charts_train_bt[[plotnum]] +
+      scale_x_date(limits = c(as.Date(input$startdate, "%Y-%m-%d"), as.Date(input$enddate, "%Y-%m-%d")),
+                   date_labels = "%m.%d.%Y",
+                   breaks = as.Date(quarters_selected, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))
+})
+```
+
+Row
+-------------------------------------
+
+### Completed Training
+```{r}
+renderPlot({
+  plotnum <- as.numeric(input$grantee)
+    charts_train_ct[[plotnum]] +
+      scale_x_date(limits = c(as.Date(input$startdate, "%Y-%m-%d"), as.Date(input$enddate, "%Y-%m-%d")),
+                   date_labels = "%m.%d.%Y",
+                   breaks = as.Date(quarters_selected, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))
+})
+```
+ 
+Row
+-------------------------------------
+
+
+### Completed with Credential
+```{r}
+renderPlot({
+  plotnum <- as.numeric(input$grantee)
+    charts_train_cred_coc[[plotnum]] +
+      scale_x_date(limits = c(as.Date(input$startdate, "%Y-%m-%d"), as.Date(input$enddate, "%Y-%m-%d")),
+                   date_labels = "%m.%d.%Y",
+                   breaks = as.Date(quarters_selected, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))
+})
+```
+
+Row
+-------------------------------------
+### Entered Employment
+```{r}
+renderPlot({
+  plotnum <- as.numeric(input$grantee)
+    charts_empl_ee[[plotnum]] +
+      scale_x_date(limits = c(as.Date(input$startdate, "%Y-%m-%d"), as.Date(input$enddate, "%Y-%m-%d")),
+                   date_labels = "%m.%d.%Y",
+                   breaks = as.Date(quarters_selected, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))
+})
+```
+
+Row
+-------------------------------------
+### Incumbent Workers Advanced
+```{r}
+renderPlot({
+  plotnum <- as.numeric(input$grantee)
+    charts_total_iwa[[plotnum]] +
+      scale_x_date(limits = c(as.Date(input$startdate, "%Y-%m-%d"), as.Date(input$enddate, "%Y-%m-%d")),
+                   date_labels = "%m.%d.%Y",
+                   breaks = as.Date(quarters_selected, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))
+})
+```
+
+
+
+All Data
+=====================================
+
+Inputs {.sidebar data-width=300}
+-------------------------------------
+
+
+```{r}
+
+grantees <- unique(master_table_grantees$`Grantee Name`)
+grantees_len <- length(grantees)
+grantees_input <- setNames(grantees, grantees)
+  
+selectInput(
+  "grantees_select", 
+  "Grantee:",
+  choices = grantees,
+  selected = grantees,
+  # width = "400px",
+  selectize = FALSE,
+  size = 10,
+  multiple = TRUE
+  )
+  
+
+# metric_input <- setNames(ps_columns_fctr$renamed, ps_columns_fctr$ow_variable)
+
+metric_input <- setNames(ps_columns_fctr$renamed, ps_columns_fctr$ow_variable)
+
+selectInput(
+  "metric_interactive", 
+  "Performance Metric:",
+  choices = metric_input,
+  selected = metric_input,
+  width = "300px",
+  selectize = FALSE,
+  size = 6,
+  multiple = TRUE)
+
+
+
+
+```
+
+Row  {data-height=500}
+-------------------------------------
+### Chart
+
+```{r}
+all_data_table <- df %>%
+    select(qtr_end, grantee, all_of(ps_cols)) %>%
+    mutate(across(all_of(ps_cols), ~replace(., is.na(.), 0))) %>%
+    group_by(qtr_end, grantee) %>%
+    summarise(across(all_of(ps_cols), sum)) %>%
+    pivot_longer(cols = all_of(ps_cols), names_to = "Variable Name", values_to = "Value") %>%
+    mutate(qtr_end = as.Date(qtr_end, "%m.%d.%Y")) %>%
+    arrange(qtr_end) %>%
+    mutate(`Performance Metric` = str_replace_all(`Variable Name`, setNames(df_variables$ow_variable, df_variables$renamed_variables_lower)),
+           qtr_end = format(qtr_end, "%m.%d.%Y")) %>%
+    pivot_wider(id_cols = c(grantee, `Variable Name`, `Performance Metric`),
+                names_from = qtr_end,
+                values_from = c(`Value`)) %>%
+    rename(`Grantee Name` = grantee)
+
+renderPlot({
+  all_data_table %>%
+    pivot_longer(cols = all_of(matches("^[0-9]")),
+                 names_to = "qtr_end",
+                 values_to = "value") %>%
+    filter(`Grantee Name` %in% input$grantees_select) %>%
+    filter(`Variable Name` %in% input$metric_interactive) %>%
+    group_by(`Variable Name`, `Performance Metric`, qtr_end) %>% 
+    summarise(value = sum(value)) %>% 
+      ungroup() %>% 
+    ggplot(aes(x=mdy(qtr_end), y=value, group=`Variable Name`)) +
+    geom_line(aes(color = `Performance Metric`), linewidth = 1.5)+
+    geom_point(aes(color = `Performance Metric`), size = 4) + 
+    ggrepel::geom_label_repel(
+      aes(
+        label = prettyNum(value, big.mark = ',')),
+               inherit.aes = TRUE,
+               size = 5) +
+    scale_x_date(date_labels = "%m.%d.%Y",
+                 breaks = mdy(unique(df$qtr_end)),
+                 expand = expansion(mult = 0.2)) +
+    scale_y_continuous(expand = expansion(mult = c(0.1, .3))) +
+    labs(
+      title = "All Grantees",
+      # subtitle = subtitle,
+      x = "Quarter End",
+      y = "Participants") + 
+    theme_minimal(base_size = 14) +
+    theme(text = element_text(size = 12),
+          legend.position = "top",
+          legend.text = element_text(size = 12),
+          legend.direction = "vertical",
+          legend.box = "horizontal", 
+          legend.title = element_blank(),
+          panel.grid.major.x = element_blank(),
+          panel.grid.minor.x = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.text.x = element_text(family = "sans",
+                                     size = 12,
+                                     hjust = .5,
+                                     vjust = .5),
+          axis.text.y = element_text(size = 12)) +
+        guides(color = guide_legend(nrow = 3, byrow = TRUE))
+})
+```
+
+
+
+
+Row  {data-height=400}
+-------------------------------------
+### Data
+
+```{r}
+
+
+renderUI({
+  HTML(
+    all_data_table %>% 
+      filter(`Grantee Name` %in% input$grantees_select) %>%
+      filter(`Variable Name` %in% input$metric_interactive) %>%
+      select(-`Variable Name`) %>%
+      kbl_table()  %>% 
+      scroll_box(height = "350px")
+  )
+})
+
+```
+
+Row  {data-height=400}
+-------------------------------------
+### Data Totals
+
+```{r}
+renderUI({
+  HTML(
+    all_data_table %>% 
+      filter(`Grantee Name` %in% input$grantees_select) %>%
+      filter(`Variable Name` %in% input$metric_interactive) %>%
+      group_by(`Variable Name`, `Performance Metric`) %>% 
+      summarise(across(matches("^[0-9]"), sum)) %>%
+      mutate(`Grantee Name` = "Totals for Grantees Currently Selected in Menu", .before = `Variable Name`) %>%
+      mutate(`Variable Name` = factor(`Variable Name`, levels = ps_cols_fctr$renamed)) %>% 
+      arrange(`Variable Name`) %>%
+      ungroup() %>% 
+      select(-`Variable Name`) %>%
+      kbl_table() %>% 
+      scroll_box(height = "350px")
+  )
+})
+```
+
+
+
+Row  {data-height=400}
+-------------------------------------
+### Targets
+
+```{r}
+
+cols_abbr <- tibble(renamed = ps_cols) %>% 
+  cbind(short_target_fctr)
+
+all_targets_table <- df_targets %>% 
+    pivot_longer(
+      cols = starts_with("target"),
+      names_prefix = "target_",
+      names_to = c("year", "metric"),
+      names_sep = "_",
+      values_to = "target"
+      ) %>%
+    mutate(target = replace(target, is.na(target), 0)) %>%
+    select(-grant_number) %>%
+    pivot_wider(
+      id_cols = c(grantee, metric),
+      names_from = "year",
+      names_prefix = "03.31.",
+      values_from = c("target"),
+      values_fn = max
+    ) %>%
+    rename_with(., ~ str_c(.x, " Target"), .cols = !c(1, 2)) %>%
+  mutate(
+    metric = str_replace_all(metric, setNames(ps_cols_fctr$renamed, ps_cols_fctr$short))) %>%
+  left_join(x = ., y = df_variables, by = c("metric" = "renamed_variables_lower")) %>%
+  select(
+    `Grantee Name` = grantee,
+    `Variable Name` = metric,
+    `Performance Metric` = ow_variable,
+    everything()
+  ) %>%
+  select(1:7)
+
+renderUI({
+  HTML(
+    all_targets_table %>% 
+      filter(`Grantee Name` %in% input$grantees_select) %>%
+      filter(`Variable Name` %in% input$metric_interactive) %>% 
+      select(-c(`Variable Name`)) %>%
+      kbl_table()  %>% 
+      scroll_box(height = "350px")
+  )
+})
+
+```
+
+Row  {data-height=400}
+-------------------------------------
+### Targets Totals
+```{r}
+renderUI({
+  HTML(
+    all_targets_table %>% 
+      filter(`Grantee Name` %in% input$grantees_select) %>%
+      filter(`Variable Name` %in% input$metric_interactive) %>%
+      group_by(`Variable Name`, `Performance Metric`) %>% 
+      summarise(across(matches("^[0-9]"), sum)) %>%
+      mutate(`Grantee Name` = "Totals for Grantees Currently Selected in Menu", .before = `Variable Name`) %>% 
+      mutate(`Variable Name` = factor(`Variable Name`, levels = ps_cols_fctr$renamed)) %>% 
+      arrange(`Variable Name`) %>% 
+      ungroup() %>% 
+      select(-c(`Variable Name`)) %>%
+      kbl_table() %>% 
+      scroll_box(height = "350px")
+  )
+})
+```
+
+
