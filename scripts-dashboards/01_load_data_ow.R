@@ -1,4 +1,3 @@
-
 # load data
 
 df <- read.csv(here::here("data-ready", "combined_QPR_ow_data.csv"))
@@ -118,6 +117,11 @@ all_targets_table <- df_targets %>%
 
 num_quarters <- unique(df$qtr_end) %>% length()
 last_quarter <- max(as.Date(df$qtr_end, "%m.%d.%Y"))
+current_reporting_year <- df_grant_years_raw[df_grant_years_raw$`Reporting Quarters` == last_quarter, ]
+previous_reporting_year <- df_grant_years |> ungroup() |> mutate(previous_year = lag(Year)) |> filter(Year == current_reporting_year$Year) |> pull(previous_year)
+previous_reporting_quarter <- df_grant_years_raw[df_grant_years_raw$Year == previous_reporting_year, ] |> select(3) |> slice_head() |> pull() |> format("%m.%d.%Y")
+
+
 
 all_last_target <- all_targets_table %>% 
   select(-1) %>%
@@ -133,6 +137,16 @@ all_current_year_target <- subset(all_targets_table, select = format(all_last_ta
   rowwise() %>% 
   mutate(`Current Year Target` = sum(across(everything()))) %>% 
   select(tail(names(.), 1))
+
+all_previous_year_target <- subset(
+  all_targets_table, 
+  select = format(
+    all_last_target$`<date>`, 
+    "%m.%d.%Y")) |> 
+  select(-last_col()) |> 
+  mutate(`Previous Year Target` = rowSums(across(everything()))) %>%
+  select(last_col())
+
 
 all_better_targets_table <- all_targets_table %>% 
   rename_with(., ~ str_c(.x, "<br>Y", 1:4, " Target"), .cols = !c(1))
@@ -162,13 +176,23 @@ for_make_table_all <- df %>%
   select(-metric) %>%
   mutate(`lastyear` = .[[as.numeric(num_quarters)+1]]) %>%
   cbind(all_current_year_target) %>%
+  cbind(all_previous_year_target) |> 
   mutate(`% of Current Year Target*` = lastyear/`Current Year Target`,
          `% of Current Year Target*` = scales::percent(`% of Current Year Target*`, accuracy = 1)) %>%
+  mutate(`% of Previous Year Target` := !!rlang::sym(previous_reporting_quarter)/`Previous Year Target`) |> 
+  mutate(previous_year_target_met = case_when(
+    `% of Previous Year Target` >= 1 ~ 1,
+    TRUE ~ 0
+  )) |> 
   cbind(all_total_target) %>%
   relocate(`Total Target` = total, .before = `% of Current Year Target*`) %>%
   mutate(`% of Total Target` = lastyear/`Total Target`,
          `% of Total Target` = scales::percent(`% of Total Target`)) %>%
-  select(-lastyear, -`Current Year Target`, -metric)
+  select(-lastyear, -`Current Year Target`, -metric) |> 
+  mutate(is_6_30_qtr = case_when(
+    format(last_quarter, "%m.%d") == "06.30" ~ 1,
+    TRUE ~ 0
+  ))
 
 # VALUES FOR DROPDOWNS-----------------------------
 

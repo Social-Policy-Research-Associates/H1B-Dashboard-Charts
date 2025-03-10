@@ -19,7 +19,7 @@ RH Dashboard: <https://spra.shinyapps.io/RH-Charts/>
 
 # Quarterly Update Process
 
-1.  Project manager (Nicole Holmes) emails latest quarter of data as attached Excel files.
+1.  Project manager (Tessa St. John) emails latest quarter of data as attached Excel files.
 2.  Download Excels to `data-raw` folder in `H1B-Dashboard-Charts` project in `PROJECT-CLONES` folder.
 
 ::: callout-note

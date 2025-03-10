@@ -102,7 +102,7 @@ make_table <- function(data, one_grantee, targets) {
   
   # VALUES FOR TESTING
   # data <- df
-  # one_grantee <- grantees[12]
+  # one_grantee <- grantees[20]
   # targets <- df_targets
   
   targets_table <- targets %>% 
@@ -122,10 +122,13 @@ make_table <- function(data, one_grantee, targets) {
       values_from = c("target"),
       values_fn = max
     )
+  print(one_grantee)
   
   num_quarters <- unique(data$qtr_enddate) %>% length()
   last_quarter <- max(as.Date(data$qtr_end, "%m.%d.%Y"))
-  
+  current_reporting_year <- df_grant_years_raw[df_grant_years_raw$`Reporting Quarters` == last_quarter, ]
+  previous_reporting_year <- df_grant_years |> ungroup() |> mutate(previous_year = lag(Year)) |> filter(Year == current_reporting_year$Year) |> pull(previous_year)
+  previous_reporting_quarter <- df_grant_years_raw[df_grant_years_raw$Year == previous_reporting_year, ] |> select(3) |> slice_head() |> pull() |> format("%m.%d.%Y")
   
   
   last_target <- targets_table %>% 
@@ -153,6 +156,15 @@ make_table <- function(data, one_grantee, targets) {
       last_target$`<date>`, 
       "%m.%d.%Y")) %>%
     mutate(`Current Year Target` = rowSums(across(everything()))) %>%
+    select(last_col())
+  
+  previous_year_target <- subset(
+    targets_table, 
+    select = format(
+      last_target$`<date>`, 
+      "%m.%d.%Y")) |> 
+    select(-last_col()) |> 
+    mutate(`Previous Year Target` = rowSums(across(everything()))) %>%
     select(last_col())
   
   better_targets_table <- targets_table %>% 
@@ -185,12 +197,22 @@ make_table <- function(data, one_grantee, targets) {
     select(-grantee, -metric) %>%
     mutate(`lastyear` = .[[as.numeric(num_quarters)+1]]) %>%
     cbind(current_year_target) %>% 
+    cbind(previous_year_target) |> 
+    mutate(`% of Previous Year Target` := !!rlang::sym(previous_reporting_quarter)/`Previous Year Target`) |> 
+    mutate(previous_year_target_met = case_when(
+      `% of Previous Year Target` >= 1 ~ 1,
+      TRUE ~ 0
+    )) |> 
     mutate(`% of Current Year Target*` = lastyear/`Current Year Target`,
            `% of Current Year Target*` = scales::percent(`% of Current Year Target*`, accuracy = 1)) %>% 
     cbind(total_target) %>%
     relocate(`Total Target` = total, .before = `% of Current Year Target*`) %>%
     mutate(`% of Total Target` = lastyear/`Total Target`,
            `% of Total Target` = scales::percent(`% of Total Target`)) %>%
+    mutate(is_6_30_qtr = case_when(
+      format(last_quarter, "%m.%d") == "06.30" ~ 1, ###### FLAG 
+      TRUE ~ 0
+    )) |> 
     select(-lastyear, -`Current Year Target`, -metric)
 }
 
@@ -230,5 +252,5 @@ chart_by_current_target <- function(perf_metric, title_label) {
                                      # hjust = 0.5,
                                      # vjust = 10
           )) +
-    ggpubr::rotate_x_text()
+    ggpubr::rotate_x_text(angle = 45)
 }

@@ -74,7 +74,18 @@ header_quarters <<- ncol(quarters)
 first_qtr <<- first(quarters)
 last_qtr <<- last(quarters)
 last_qtr_col <<- quarters %>% select(last_col(0L)) %>% colnames() %>% stringr::str_extract("^[0-9]{2}.[0-9]{2}")
-  last_qtr_column <<- quarters %>% select(last_col(0L)) %>% colnames() %>% sym()
+last_qtr_column <<- quarters %>% select(last_col(0L)) %>% colnames() %>% sym()
+current_reporting_year <<- df_grant_years_raw |> 
+  mutate(
+    reporting_qtr_format = format(`Reporting Quarters`, "%m.%d.%Y")
+  ) |>
+  filter(
+    reporting_qtr_format == last_quarter
+  )
+previous_reporting_year <<-
+  df_grant_years |> ungroup() |> mutate(previous_year = lag(Year)) |> filter(Year == current_reporting_year$Year) |> pull(previous_year)
+previous_reporting_quarter <<-
+  df_grant_years_raw[df_grant_years_raw$Year == previous_reporting_year,] |> select(3) |> slice_head() |> pull() |> format("%m.%d.%Y")
 
   current_threshold <<- threshold_guide %>%
   filter(quarter == last_qtr_col) #current_qtr
@@ -145,8 +156,9 @@ by_grantee_listener <- reactive({
       `Performance Metric`,
       beg_qtr:end_qtr, 
       all_of(targets_selected),
-      `Total Target`) %>%
-    rowwise() %>% 
+      `Total Target`,
+      previous_year_target_met,
+      is_6_30_qtr) %>%    rowwise() %>% 
     mutate(
       `Cumulative Target` = sum(c_across(targets_selected)),
       `% of Cumulative Target` = scales::percent(!!end_qtr/`Cumulative Target`),
@@ -177,7 +189,7 @@ Inputs {.sidebar}
 checkboxGroupInput(
   "years", 
   "Reporting Years",
-  selected = c("1", "2", "3"),
+  selected = c("1", "2", "3", "4"),
   inline = FALSE,
   choiceNames = c("Y1", "Y2", "Y3", "Y4", "Extension"),
   choiceValues = c("1", "2", "3", "4", "Extension")
@@ -278,6 +290,7 @@ current_year_color <- 1+header_quarters+header_targets+2
         width_min = '70px',
         width_max = '75px',
         background = case_when(
+                    for_make_table_all$`% of Current Year Target*` %in% t_yellow() & for_make_table_all$is_6_30_qtr == 1 & for_make_table_all$previous_year_target_met == 0 ~ "lightpink",
           for_make_table_all$`% of Current Year Target*` %in% t_green() ~ "lightgreen",
           for_make_table_all$`% of Current Year Target*` %in% t_yellow() ~ "yellow",
           for_make_table_all$`% of Current Year Target*` %in% t_red() ~ "lightpink",
@@ -305,7 +318,14 @@ renderPlot({
           scale_x_date(limits = c(as.Date(first_quarter, "%m.%d.%Y"), as.Date(last_quarter, "%m.%d.%Y")),
                    date_labels = "%m.%d.%Y",
                    breaks = as.Date(just_qtrs, "%m.%d.%Y"),
-                 expand = expansion(mult = 0.2))
+                 expand = expansion(mult = 0.2))+
+    ggpubr::rotate_x_text(angle = 45) +
+    theme(
+      axis.text.x = element_text(family = "sans",
+                                     size = 12,
+                                     hjust = .5,
+                                     vjust = 1)
+    )
   
   })
 ```
@@ -327,20 +347,25 @@ participants_served <- reactive({
       `Cumulative Target` = sum(c_across(str_replace_all(colnames(targets_viewed), "<br>", "\n"))),
       `% of Cumulative Target` = (!!last_qtr_column/`Cumulative Target`*100)
     ) %>%
-    select(
-      `Grantee Name`,
-      `% of Cumulative Target`
-    ) %>%
-    arrange(desc(`% of Cumulative Target`)) %>%
+
     mutate(`% of Cumulative Target*` = percent(`% of Cumulative Target`/100, accuracy = 1)) %>%
     rowwise() %>% 
   mutate(color_bars = case_when(
-    `% of Cumulative Target` > yellow_green_participants_served ~ "#70AD47",
-    `% of Cumulative Target` <= yellow_green_participants_served &
+        `% of Cumulative Target` < yellow_green_participants_served &
+      `% of Cumulative Target` > red_yellow_participants_served & is_6_30_qtr == 1 & previous_year_target_met == 0 ~ "#FF9B9B",
+    `% of Cumulative Target` >= yellow_green_participants_served ~ "#70AD47",
+    `% of Cumulative Target` < yellow_green_participants_served &
       `% of Cumulative Target` > red_yellow_participants_served ~ "#FFFF00",
     `% of Cumulative Target` <= red_yellow_participants_served ~ "#FF9B9B",
     TRUE ~ "lightgray"
-  ))
+  )) |> 
+          select(
+      `Grantee Name`,
+      `% of Cumulative Target`,
+      `% of Cumulative Target*`,
+      color_bars
+    ) %>%
+    arrange(desc(`% of Cumulative Target`))
 })
 
 renderPlot({
@@ -364,7 +389,14 @@ renderPlot({
           scale_x_date(limits = c(as.Date(first_quarter, "%m.%d.%Y"), as.Date(last_quarter, "%m.%d.%Y")),
                    date_labels = "%m.%d.%Y",
                    breaks = as.Date(just_qtrs, "%m.%d.%Y"),
-                 expand = expansion(mult = 0.2))
+                 expand = expansion(mult = 0.2))+
+    ggpubr::rotate_x_text(angle = 45) +
+    theme(
+      axis.text.x = element_text(family = "sans",
+                                     size = 12,
+                                     hjust = .5,
+                                     vjust = 1)
+    )
     })
 ```
 
@@ -386,20 +418,25 @@ began_training <- reactive({
       `Cumulative Target` = sum(c_across(str_replace_all(colnames(targets_viewed), "<br>", "\n"))),
       `% of Cumulative Target` = (!!last_qtr_column/`Cumulative Target`*100)
     ) %>%
-    select(
-      `Grantee Name`,
-      `% of Cumulative Target`
-    ) %>%
-    arrange(desc(`% of Cumulative Target`)) %>%
+
     mutate(`% of Cumulative Target*` = percent(`% of Cumulative Target`/100, accuracy = 1)) %>%
     rowwise() %>% 
   mutate(color_bars = case_when(
-    `% of Cumulative Target` > yellow_green_began_training ~ "#70AD47",
-    `% of Cumulative Target` <= yellow_green_began_training &
+                       `% of Cumulative Target` < yellow_green_began_training &
+      `% of Cumulative Target` > red_yellow_began_training & is_6_30_qtr == 1 & previous_year_target_met == 0 ~ "#FF9B9B",
+    `% of Cumulative Target` >= yellow_green_began_training ~ "#70AD47",
+    `% of Cumulative Target` < yellow_green_began_training &
       `% of Cumulative Target` > red_yellow_began_training ~ "#FFFF00",
     `% of Cumulative Target` <= red_yellow_began_training ~ "#FF9B9B",
     TRUE ~ "lightgray"
-  ))
+  )) |> 
+     select(
+      `Grantee Name`,
+      `% of Cumulative Target`,
+      `% of Cumulative Target*`,
+      color_bars
+    ) %>%
+    arrange(desc(`% of Cumulative Target`))
 })
 
 renderPlot({
@@ -425,7 +462,15 @@ renderPlot({
           scale_x_date(limits = c(as.Date(first_quarter, "%m.%d.%Y"), as.Date(last_quarter, "%m.%d.%Y")),
                    date_labels = "%m.%d.%Y",
                    breaks = as.Date(just_qtrs, "%m.%d.%Y"),
-                 expand = expansion(mult = 0.2))})
+                 expand = expansion(mult = 0.2))+
+    ggpubr::rotate_x_text(angle = 45) +
+    theme(
+      axis.text.x = element_text(family = "sans",
+                                     size = 12,
+                                     hjust = .5,
+                                     vjust = 1)
+    )
+    })
 ```
 
 ### Progress to Current Year Target
@@ -445,20 +490,25 @@ completed_training <- reactive({
       `Cumulative Target` = sum(c_across(str_replace_all(colnames(targets_viewed), "<br>", "\n"))),
       `% of Cumulative Target` = (!!last_qtr_column/`Cumulative Target`*100)
     ) %>%
-    select(
-      `Grantee Name`,
-      `% of Cumulative Target`
-    ) %>%
-    arrange(desc(`% of Cumulative Target`)) %>%
+
     mutate(`% of Cumulative Target*` = percent(`% of Cumulative Target`/100, accuracy = 1)) %>%
     rowwise() %>% 
   mutate(color_bars = case_when(
-    `% of Cumulative Target` > yellow_green_completed_training ~ "#70AD47",
-    `% of Cumulative Target` <= yellow_green_completed_training &
+                   `% of Cumulative Target` < yellow_green_completed_training &
+      `% of Cumulative Target` > red_yellow_completed_training & is_6_30_qtr == 1 & previous_year_target_met == 0 ~ "#FF9B9B",
+    `% of Cumulative Target` >= yellow_green_completed_training ~ "#70AD47",
+    `% of Cumulative Target` < yellow_green_completed_training &
       `% of Cumulative Target` > red_yellow_completed_training ~ "#FFFF00",
     `% of Cumulative Target` <= red_yellow_completed_training ~ "#FF9B9B",
     TRUE ~ "lightgray"
-  ))
+  )) |> 
+     select(
+      `Grantee Name`,
+      `% of Cumulative Target`,
+      `% of Cumulative Target*`,
+      color_bars
+    ) %>%
+    arrange(desc(`% of Cumulative Target`))
 })
 
 renderPlot({
@@ -484,7 +534,15 @@ renderPlot({
           scale_x_date(limits = c(as.Date(first_quarter, "%m.%d.%Y"), as.Date(last_quarter, "%m.%d.%Y")),
                    date_labels = "%m.%d.%Y",
                    breaks = as.Date(just_qtrs, "%m.%d.%Y"),
-                 expand = expansion(mult = 0.2))})
+                 expand = expansion(mult = 0.2))+
+    ggpubr::rotate_x_text(angle = 45) +
+    theme(
+      axis.text.x = element_text(family = "sans",
+                                     size = 12,
+                                     hjust = .5,
+                                     vjust = 1)
+    )
+    })
 ```
 
 ### Progress to Current Year Target
@@ -504,20 +562,25 @@ completed_with_credential <- reactive({
       `Cumulative Target` = sum(c_across(str_replace_all(colnames(targets_viewed), "<br>", "\n"))),
       `% of Cumulative Target` = (!!last_qtr_column/`Cumulative Target`*100)
     ) %>%
-    select(
-      `Grantee Name`,
-      `% of Cumulative Target`
-    ) %>%
-    arrange(desc(`% of Cumulative Target`)) %>%
+
     mutate(`% of Cumulative Target*` = percent(`% of Cumulative Target`/100, accuracy = 1)) %>%
     rowwise() %>% 
   mutate(color_bars = case_when(
-    `% of Cumulative Target` > yellow_green_completed_with_credential ~ "#70AD47",
-    `% of Cumulative Target` <= yellow_green_completed_with_credential &
+                     `% of Cumulative Target` < yellow_green_completed_with_credential &
+      `% of Cumulative Target` > red_yellow_completed_with_credential & is_6_30_qtr == 1 & previous_year_target_met == 0 ~ "#FF9B9B",
+    `% of Cumulative Target` >= yellow_green_completed_with_credential ~ "#70AD47",
+    `% of Cumulative Target` < yellow_green_completed_with_credential &
       `% of Cumulative Target` > red_yellow_completed_with_credential ~ "#FFFF00",
     `% of Cumulative Target` <= red_yellow_completed_with_credential ~ "#FF9B9B",
     TRUE ~ "lightgray"
-  ))
+  ))|> 
+     select(
+      `Grantee Name`,
+      `% of Cumulative Target`,
+      `% of Cumulative Target*`,
+      color_bars
+    ) %>%
+    arrange(desc(`% of Cumulative Target`))
 })
 
 renderPlot({
@@ -540,11 +603,18 @@ renderPlot({
   silly_legend()
   
   all_grantees$empl_ee +
-    scale_x_date(limits = c(as.Date(first_quarter, "%m.%d.%Y"), as.Date(last_quarter, "%m.%d.%Y")),
-      date_labels = "%m.%d.%Y",
-      breaks = as.Date(just_qtrs, "%m.%d.%Y"),
-      expand = expansion(mult = 0.2)
-    )})
+          scale_x_date(limits = c(as.Date(first_quarter, "%m.%d.%Y"), as.Date(last_quarter, "%m.%d.%Y")),
+                   date_labels = "%m.%d.%Y",
+                   breaks = as.Date(just_qtrs, "%m.%d.%Y"),
+                 expand = expansion(mult = 0.2))+
+    ggpubr::rotate_x_text(angle = 45) +
+    theme(
+      axis.text.x = element_text(family = "sans",
+                                     size = 12,
+                                     hjust = .5,
+                                     vjust = 1)
+    )
+    })
 ```
 
 ### Progress to Current Year Target
@@ -564,20 +634,25 @@ entered_employment <- reactive({
       `Cumulative Target` = sum(c_across(str_replace_all(colnames(targets_viewed), "<br>", "\n"))),
       `% of Cumulative Target` = (!!last_qtr_column/`Cumulative Target`*100)
     ) %>%
-    select(
-      `Grantee Name`,
-      `% of Cumulative Target`
-    ) %>%
-    arrange(desc(`% of Cumulative Target`)) %>%
+
     mutate(`% of Cumulative Target*` = percent(`% of Cumulative Target`/100, accuracy = 1)) %>%
     rowwise() %>% 
   mutate(color_bars = case_when(
-    `% of Cumulative Target` > yellow_green_entered_employment ~ "#70AD47",
-    `% of Cumulative Target` <= yellow_green_entered_employment &
+             `% of Cumulative Target` < yellow_green_entered_employment &
+      `% of Cumulative Target` > red_yellow_entered_employment & is_6_30_qtr == 1 & previous_year_target_met == 0 ~ "#FF9B9B",
+    as.integer(`% of Cumulative Target`) >= yellow_green_entered_employment ~ "#70AD47",
+    `% of Cumulative Target` < yellow_green_entered_employment &
       `% of Cumulative Target` > red_yellow_entered_employment ~ "#FFFF00",
     `% of Cumulative Target` <= red_yellow_entered_employment ~ "#FF9B9B",
     TRUE ~ "lightgray"
-  ))
+  )) |> 
+     select(
+      `Grantee Name`,
+      `% of Cumulative Target`,
+      `% of Cumulative Target*`,
+      color_bars
+    ) %>%
+    arrange(desc(`% of Cumulative Target`))
 })
 
 renderPlot({
@@ -602,7 +677,15 @@ renderPlot({
           scale_x_date(limits = c(as.Date(first_quarter, "%m.%d.%Y"), as.Date(last_quarter, "%m.%d.%Y")),
                    date_labels = "%m.%d.%Y",
                    breaks = as.Date(just_qtrs, "%m.%d.%Y"),
-                 expand = expansion(mult = 0.2))})
+                 expand = expansion(mult = 0.2))+
+    ggpubr::rotate_x_text(angle = 45) +
+    theme(
+      axis.text.x = element_text(family = "sans",
+                                     size = 12,
+                                     hjust = .5,
+                                     vjust = 1)
+    )
+    })
 ```
 
 ### Progress to Current Year Target
@@ -622,20 +705,23 @@ incumbent_workers_adv <- reactive({
       `Cumulative Target` = sum(c_across(str_replace_all(colnames(targets_viewed), "<br>", "\n"))),
       `% of Cumulative Target` = (!!last_qtr_column/`Cumulative Target`*100)
     ) %>%
-    select(
-      `Grantee Name`,
-      `% of Cumulative Target`
-    ) %>%
-    arrange(desc(`% of Cumulative Target`)) %>%
+
     mutate(`% of Cumulative Target*` = percent(`% of Cumulative Target`/100, accuracy = 1)) %>%
     rowwise() %>% 
   mutate(color_bars = case_when(
-    `% of Cumulative Target` > yellow_green_incumbent_workers_adv ~ "#70AD47",
-    `% of Cumulative Target` <= yellow_green_incumbent_workers_adv &
+    `% of Cumulative Target` >= yellow_green_incumbent_workers_adv ~ "#70AD47",
+    `% of Cumulative Target` < yellow_green_incumbent_workers_adv &
       `% of Cumulative Target` > red_yellow_incumbent_workers_adv ~ "#FFFF00",
     `% of Cumulative Target` <= red_yellow_incumbent_workers_adv ~ "#FF9B9B",
     TRUE ~ "lightgray"
-  ))
+  )) |> 
+     select(
+      `Grantee Name`,
+      `% of Cumulative Target`,
+      `% of Cumulative Target*`,
+      color_bars
+    ) %>%
+    arrange(desc(`% of Cumulative Target`))
 })
 
 renderPlot({
@@ -664,7 +750,7 @@ selectInput("startdate", "Start Date", choices = df_dates$qtr_end, selected = df
 selectInput("enddate", "End Date", choices = df_dates$qtr_end, selected = df_dates_last$qtr_end)
 
 tags$h3("Targets")
-sliderInput("targets_by_grantee", "Show Targets for Years:", min = 1, max = 4, value = c(1, 3))
+sliderInput("targets_by_grantee", "Show Targets for Years:", min = 1, max = 4, value = c(1, 4))
 
 
 
@@ -776,7 +862,9 @@ renderUI({
   t_red_by_grantee <- seq(0, current_threshold_by_grantee$red_t, by = .01) %>% percent(accuracy = 1)
   
 HTML(
-    kbl(better_by_grantee_table) %>% 
+    better_by_grantee_table %>% 
+      select(-is_6_30_qtr, -previous_year_target_met) |> 
+      kbl() |> 
     kable_paper() %>% 
     kable_styling(bootstrap_options = c("striped", "hover"), 
                   position = "left", 
@@ -788,6 +876,7 @@ HTML(
         width_min = '70px', 
         width_max = '75px',
         background = case_when(
+                    better_by_grantee_table$`% of Cumulative Target` %in% t_yellow_by_grantee & better_by_grantee_table$is_6_30_qtr == 1 & better_by_grantee_table$previous_year_target_met == 0 ~ "lightpink",
           better_by_grantee_table$`% of Cumulative Target` %in% t_green_by_grantee ~ "lightgreen",
           better_by_grantee_table$`% of Cumulative Target` %in% t_yellow_by_grantee ~ "yellow",
           better_by_grantee_table$`% of Cumulative Target` %in% t_red_by_grantee ~ "lightpink",
@@ -818,7 +907,14 @@ renderPlot({
       scale_x_date(limits = c(as.Date(input$startdate, "%Y-%m-%d"), as.Date(input$enddate, "%Y-%m-%d")),
                    date_labels = "%m.%d.%Y",
                    breaks = as.Date(quarters_selected, "%m.%d.%Y"),
-                 expand = expansion(mult = 0.2))
+                 expand = expansion(mult = 0.2))+
+    ggpubr::rotate_x_text(angle = 45) +
+    theme(
+      axis.text.x = element_text(family = "sans",
+                                     size = 12,
+                                     hjust = .5,
+                                     vjust = 1)
+    )
 })
 ```
 
@@ -833,7 +929,14 @@ renderPlot({
       scale_x_date(limits = c(as.Date(input$startdate, "%Y-%m-%d"), as.Date(input$enddate, "%Y-%m-%d")),
                    date_labels = "%m.%d.%Y",
                    breaks = as.Date(quarters_selected, "%m.%d.%Y"),
-                 expand = expansion(mult = 0.2))
+                 expand = expansion(mult = 0.2))+
+    ggpubr::rotate_x_text(angle = 45) +
+    theme(
+      axis.text.x = element_text(family = "sans",
+                                     size = 12,
+                                     hjust = .5,
+                                     vjust = 1)
+    )
 })
 ```
 
@@ -848,7 +951,14 @@ renderPlot({
       scale_x_date(limits = c(as.Date(input$startdate, "%Y-%m-%d"), as.Date(input$enddate, "%Y-%m-%d")),
                    date_labels = "%m.%d.%Y",
                    breaks = as.Date(quarters_selected, "%m.%d.%Y"),
-                 expand = expansion(mult = 0.2))
+                 expand = expansion(mult = 0.2))+
+    ggpubr::rotate_x_text(angle = 45) +
+    theme(
+      axis.text.x = element_text(family = "sans",
+                                     size = 12,
+                                     hjust = .5,
+                                     vjust = 1)
+    )
 })
 ```
  
@@ -864,7 +974,14 @@ renderPlot({
       scale_x_date(limits = c(as.Date(input$startdate, "%Y-%m-%d"), as.Date(input$enddate, "%Y-%m-%d")),
                    date_labels = "%m.%d.%Y",
                    breaks = as.Date(quarters_selected, "%m.%d.%Y"),
-                 expand = expansion(mult = 0.2))
+                 expand = expansion(mult = 0.2))+
+    ggpubr::rotate_x_text(angle = 45) +
+    theme(
+      axis.text.x = element_text(family = "sans",
+                                     size = 12,
+                                     hjust = .5,
+                                     vjust = 1)
+    )
 })
 ```
 
@@ -878,7 +995,14 @@ renderPlot({
       scale_x_date(limits = c(as.Date(input$startdate, "%Y-%m-%d"), as.Date(input$enddate, "%Y-%m-%d")),
                    date_labels = "%m.%d.%Y",
                    breaks = as.Date(quarters_selected, "%m.%d.%Y"),
-                 expand = expansion(mult = 0.2))
+                 expand = expansion(mult = 0.2))+
+    ggpubr::rotate_x_text(angle = 45) +
+    theme(
+      axis.text.x = element_text(family = "sans",
+                                     size = 12,
+                                     hjust = .5,
+                                     vjust = 1)
+    )
 })
 ```
 
@@ -892,7 +1016,14 @@ renderPlot({
       scale_x_date(limits = c(as.Date(input$startdate, "%Y-%m-%d"), as.Date(input$enddate, "%Y-%m-%d")),
                    date_labels = "%m.%d.%Y",
                    breaks = as.Date(quarters_selected, "%m.%d.%Y"),
-                 expand = expansion(mult = 0.2))
+                 expand = expansion(mult = 0.2))+
+    ggpubr::rotate_x_text(angle = 45) +
+    theme(
+      axis.text.x = element_text(family = "sans",
+                                     size = 12,
+                                     hjust = .5,
+                                     vjust = 1)
+    )
 })
 ```
 
@@ -1002,9 +1133,10 @@ renderPlot({
           axis.text.x = element_text(family = "sans",
                                      size = 12,
                                      hjust = .5,
-                                     vjust = .5),
+                                     vjust = 1),
           axis.text.y = element_text(size = 12)) +
-        guides(color = guide_legend(nrow = 3, byrow = TRUE))
+        guides(color = guide_legend(nrow = 3, byrow = TRUE))+
+    ggpubr::rotate_x_text(angle = 45)
 })
 ```
 
